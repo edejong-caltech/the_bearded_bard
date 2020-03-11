@@ -399,7 +399,7 @@ class HiddenMarkovModel:
         pass
 
 
-    def generate_emission(self, M):
+    def generate_emission(self, M, start_state=-1):
         '''
         Generates an emission of length M, assuming that the starting state
         is chosen uniformly at random. 
@@ -414,18 +414,22 @@ class HiddenMarkovModel:
         '''
   
         from random import choices
-        random.seed(155)
         emission = []
         states = []
+        state_opts = [i for i in range(self.L)]
 
         # get a start state
-        state_opts = [i for i in range(self.L)]
-        initial_state = choices(state_opts,self.A_start)[0]
+        if start_state == -1:
+            initial_state = choices(state_opts,self.A_start)[0]
+            #random.seed(155)
+        else:
+            initial_state = start_state
+        
         states.append(initial_state)
         prev_state = initial_state
 
         # get the rest of the states
-        for t in range(1,M):
+        for t in range(1,M+1):
             next_state = choices(state_opts,self.A[int(prev_state)])[0]
             states.append(next_state)
             prev_state = next_state
@@ -597,7 +601,7 @@ def unsupervised_HMM(seqs, n_states, observation_dict, N_iters):
             x.append(obs)
         X.append(x)
     
-    print(X)
+    #print(X)
 
     # Train an HMM with unlabeled data.
     HMM.unsupervised_learning(X, N_iters)
