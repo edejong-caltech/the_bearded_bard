@@ -32,7 +32,10 @@ def load_sonnet_text(filename):
                 sonnet_i.append([])
                 for word in text:
                     # remove line-end and intermediate punctuation
-                    word = word.strip(".,?:;")
+                    word = word.strip(".,?:;()!")
+                    word = word.strip(".'")
+                    word = word.strip(',')
+                    word = word.strip('!')
                     sonnet_i[sonnet_line].append(word)
                 #sonnet_i[sonnet_line].append('\n')
                 sonnet_line += 1
@@ -47,13 +50,22 @@ def get_rhymes(sonnets):
         # discard if there are more or fewer than 14 lines
         if len(sonnet) == 14: 
             rhymes.append([sonnet[0][-1], sonnet[2][-1]])
+            rhymes.append([sonnet[2][-1], sonnet[0][-1]])
             rhymes.append([sonnet[1][-1], sonnet[3][-1]])
+            rhymes.append([sonnet[3][-1], sonnet[1][-1]])
             rhymes.append([sonnet[4][-1], sonnet[6][-1]])
+            rhymes.append([sonnet[6][-1], sonnet[4][-1]])
             rhymes.append([sonnet[5][-1], sonnet[7][-1]])
+            rhymes.append([sonnet[7][-1], sonnet[5][-1]])
             rhymes.append([sonnet[8][-1], sonnet[10][-1]])
+            rhymes.append([sonnet[10][-1], sonnet[8][-1]])
             rhymes.append([sonnet[9][-1], sonnet[11][-1]])
+            rhymes.append([sonnet[11][-1], sonnet[9][-1]])
             rhymes.append([sonnet[12][-1], sonnet[13][-1]])
+            rhymes.append([sonnet[13][-1], sonnet[12][-1]])
         # Note: may contain duplicates
+    
+    rhymes = dict(rhymes)
     return rhymes
 
 def get_dictionary(sonnets):
@@ -87,6 +99,185 @@ POSTPROCESING:
 ### takes an emission in the form of a sequence of ints and converts it back to a sonnet using the dictionary
 # return sonnet
 
-# def fix_grammar(sonnet):
+def generate_naive_sonnet(hmm, M):
+    from HMM import HiddenMarkovModel
+    '''
+    Generates a naive sonnet of 14 lines, each line with length M, assuming that the starting state
+    is chosen uniformly at random. 
+
+    Arguments:
+        M:          Number of words per line in the sonnet
+
+    Returns:
+        sonnet:     The randomly generated sonnet as a list.
+        states:     The randomly generated states as a list.
+    '''
+  
+    M_tot = 14 * M
+    sonnet_word_ids, states = hmm.generate_emission(M_tot)
+    words = list(hmm.dictionary.keys())
+    sonnet_words = []
+
+    # convert the integer list back to a sequence of words
+    for ids in sonnet_word_ids:
+        sonnet_words.append(words[ids])
+
+    # now convert this to a 14 line sonnet
+    sonnet = []
+    for i in range(14):
+        line = sonnet_words[M*i:M*i + M]
+        line = fix_grammar(line)
+        line = ' '.join(line)
+        sonnet.append(line)
+
+    return sonnet
+
+def generate_sonnet_syllables(hmm, N_lines=14):
+    from HMM import HiddenMarkovModel
+    '''
+    Generates a sonnet of 14 lines with 10 syllables per line, assuming that the starting state
+    is chosen uniformly at random. 
+
+    Arguments:
+        M:          Number of words per line in the sonnet
+
+    Returns:
+        sonnet:     The randomly generated sonnet as a list.
+        states:     The randomly generated states as a list.
+    '''
+    words = list(hmm.dictionary.keys())
+    data = open('Syllable_dictionary.txt','rb')
+    syllable_dict = []
+    syllable_end_dict = []
+
+    # First create a dictionary corresponding to the syllable/word pairs
+    while True:
+        entry = data.readline().decode()
+        if not entry:
+            break
+        entry = entry.split()
+        if len(entry) == 3:
+            [word, syl1, syl2] = entry
+            if 'E' in syl1:
+                end_syl = int(syl1.strip('E'))
+                num_syl = syl2
+            elif 'E' in syl2:
+                end_syl = int(syl2.strip('E'))
+                num_syl = syl1
+            syllable_end_dict.append([word,end_syl])
+            
+        else:
+            [word, num_syl] = entry
+            syllable_end_dict.append([word,int(num_syl)])
+
+        num_syl = int(num_syl)
+        syllable_dict.append([word,num_syl])
+        
+    syllable_dict = dict(syllable_dict)
+    syllable_end_dict = dict(syllable_end_dict)
+
+    data.close()
+
+    # Now generate a sonnet:
+    sonnet = []
+    # first word of first line:
+    next_word_id, next_state = hmm.generate_emission(1)
+    next_word = words[next_word_id[0]]
+    next_state = next_state*2 # for consistency with others
+
+    for i in range(N_lines):
+        total_it = 0
+        syllable_count = 0
+        line_i = []
+
+        if i > 0:
+            next_word_id, next_state = hmm.generate_emission(1,start_state = prev_state)
+            next_word = words[next_word_id[0]]
+
+        while total_it < 100: # give up at some point
+            try:
+                next_word_syl = syllable_dict[next_word]
+            except KeyError:
+                next_word_id, next_state = hmm.generate_emission(1,start_state = prev_state)
+                next_word = words[next_word_id[0]]
+                continue
+
+            syllable_count += next_word_syl
+            # if adding the word doesn't take us over 14 syllables, add the word and keep going
+            if syllable_count < 10:
+                line_i.append(next_word)
+                prev_state = next_state[-1]
+
+            # if it takes us exactly to 10 syllables...
+            elif syllable_count == 10:
+                # first verify that the end syllable count isn't different
+                next_word_syl_end = syllable_end_dict[next_word]
+                # ***if it isn't different, then we have finished the line; break out of the while loop
+                if next_word_syl_end == next_word_syl:
+                    line_i.append(next_word)
+                    prev_state = next_state[-1]
+                    break
+
+                # if it's higher, discard the word and try again
+                elif next_word_syl_end > next_word_syl:
+                    syllable_count -= next_word_syl
+
+                # if it's lower, accept the word and continue
+                elif next_word_syl_end < next_word_syl:
+                    line_i.append(next_word)
+                    prev_state = next_state[-1]
+            
+            # if we go over the number of syllables, discard the word and try again
+            elif syllable_count > 10:
+                syllable_count -= next_word_syl
+            
+            next_word_id, next_state = hmm.generate_emission(1,start_state = prev_state)
+            next_word = words[next_word_id[0]]
+
+            total_it += 1
+
+        # once we have generated a 10 syllable line, add it and restart the counters
+        sonnet.append(line_i)
+    
+    # now convert the lines to lines and fix the grammar
+    sonnet_final = []
+    for line in sonnet:
+        line = fix_grammar(line)
+        line = ' '.join(line)
+        sonnet_final.append(line)
+
+    return sonnet_final
+'''
+def generate_rhyming_sonnet(hmm, rhymes):
+    sonnet = []
+
+    # line 1 and 2: anything with a rhyme:
+    while True:
+        line_1 = generate_sonnet_syllables(hmm, N_lines=1)
+        if line_1[-1] in rhymes:
+            sonnet.append(line_1)
+            break
+        else:
+            continue
+    while True:
+        line_2 = generate_sonnet_syllables(hmm, N_lines=1)
+        if line_2[-1] in rhymes:
+            sonnet.append(line_2)
+            break
+        else:
+            continue
+    
+    # line 3 and 4: rhymes with 1 and 2
+
+
+    pass
+'''
+def fix_grammar(line):
 ### check for proper capitalization rules, punctuation, etc.
-# pass
+    line[0] = line[0].capitalize()
+    for i, word in enumerate(line):
+        if word == ('i' or "i'm" or "i've" or "i'd"):
+            line[i] = line[i].capitalize()
+    return line
+
+
